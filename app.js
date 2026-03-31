@@ -1,0 +1,834 @@
+let entries = JSON.parse(localStorage.getItem('kakeibo4') || '[]');
+let viewMonth = new Date();
+viewMonth.setDate(1);
+
+let gMonthly = null;
+let gPay = null;
+let gBS = null;
+let gPL = null;
+let editingId = null;
+
+const ASSET_ACCTS = ['現金','交通・電子マネー','SBI新生銀行','住信SBIネット銀行','ゆうちょ銀行','三井住友銀行','楽天銀行','中国銀行','NISA','固定資産','その他資産'];
+const LIAB_ACCTS = ['クレジットカード','奨学金','Paidy','消費者金融','その他負債'];
+const INCOME_ACCTS = ['給与','賞与','配当金','雑収入','銀行利息','プラス帳尻合わせ'];
+const EXPENSE_ACCTS = ['食費','日用品費','家賃','水道代','ガス代','電気代','交通費','通信費','娯楽費','外食費','自己投資','沙奈費','交際費','旅費','被服費','美容費','保険','医療費','特別費','生活費','雑費','仕送り','税金等','マイナス帳尻合わせ'];
+
+const catColors = {
+  食費:'#378ADD',日用品費:'#1D9E75',家賃:'#533AB7',水道代:'#185FA5',ガス代:'#BA7517',電気代:'#EF9F27',
+  交通費:'#0F6E56',通信費:'#D4537E',娯楽費:'#D85A30',外食費:'#993C1D',自己投資:'#639922',沙奈費:'#3C3489',
+  交際費:'#5DCAA5',旅費:'#7F77DD',被服費:'#ED93B1',美容費:'#D4537E',保険:'#888780',医療費:'#E24B4A',
+  特別費:'#FA9F27',生活費:'#1D9E75',雑費:'#B4B2A9',仕送り:'#533AB7',税金等:'#444441','マイナス帳尻合わせ':'#5F5E5A'
+};
+
+const payColors = {
+  現金:'#888780','交通・電子マネー':'#533AB7',SBI新生銀行:'#378ADD',住信SBIネット銀行:'#185FA5',
+  ゆうちょ銀行:'#E24B4A',三井住友銀行:'#1D9E75',楽天銀行:'#D85A30',中国銀行:'#BA7517',
+  クレジットカード:'#3C3489',Paidy:'#D4537E'
+};
+
+const PRESETS = {
+  expense: {
+    drLabel:'借方（費目）',
+    crLabel:'貸方（支払方法）',
+    hint:'食費・日用品費などをクレカや現金で支払う場合。',
+    drOpts:[{g:'費用',opts:EXPENSE_ACCTS},{g:'資産',opts:ASSET_ACCTS}],
+    crOpts:[{g:'資産（支払元）',opts:ASSET_ACCTS},{g:'負債',opts:LIAB_ACCTS}],
+    drDef:'食費',
+    crDef:'クレジットカード'
+  },
+  income: {
+    drLabel:'借方（受取口座）',
+    crLabel:'貸方（収入科目）',
+    hint:'給与・賞与などが口座に振り込まれる場合。',
+    drOpts:[{g:'資産',opts:ASSET_ACCTS}],
+    crOpts:[{g:'収入',opts:INCOME_ACCTS}],
+    drDef:'住信SBIネット銀行',
+    crDef:'給与'
+  },
+  repay: {
+    drLabel:'借方（返済する負債）',
+    crLabel:'貸方（支払い元の口座）',
+    hint:'先月のクレカ請求などを口座から支払う場合。負債が減り、資産も減ります。',
+    drOpts:[{g:'負債',opts:LIAB_ACCTS}],
+    crOpts:[{g:'資産（支払元）',opts:ASSET_ACCTS}],
+    drDef:'クレジットカード',
+    crDef:'住信SBIネット銀行'
+  },
+  transfer: {
+    drLabel:'借方（振替先）',
+    crLabel:'貸方（振替元）',
+    hint:'口座間の振替・現金引き出し・電子マネーチャージなど。',
+    drOpts:[{g:'資産',opts:ASSET_ACCTS}],
+    crOpts:[{g:'資産',opts:ASSET_ACCTS}],
+    drDef:'現金',
+    crDef:'住信SBIネット銀行'
+  },
+  point: {
+    drLabel:'借方（費目）',
+    crLabel:'貸方（支払方法）',
+    hint:'①「収入/プラス帳尻合わせ→その他資産」でポイント分を資産に追加 ②「費目→その他資産」で支払い',
+    drOpts:[{g:'費用',opts:EXPENSE_ACCTS}],
+    crOpts:[{g:'資産',opts:ASSET_ACCTS},{g:'収入',opts:INCOME_ACCTS}],
+    drDef:'食費',
+    crDef:'その他資産'
+  }
+};
+
+let currentPreset = 'expense';
+
+function buildSelect(selId, optsGroups, defaultVal) {
+  const sel = document.getElementById(selId);
+  sel.innerHTML = optsGroups.map(g => `
+    <optgroup label="${g.g}">
+      ${g.opts.map(o => `<option${o === defaultVal ? ' selected' : ''}>${o}</option>`).join('')}
+    </optgroup>
+  `).join('');
+}
+
+function setPreset(key) {
+  currentPreset = key;
+  document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('sel'));
+  document.getElementById('pr-' + key).classList.add('sel');
+
+  const p = PRESETS[key];
+  document.getElementById('f-hint').textContent = p.hint;
+  document.getElementById('f-dr-label').textContent = p.drLabel;
+  document.getElementById('f-cr-label').textContent = p.crLabel;
+  buildSelect('f-dr', p.drOpts, p.drDef);
+  buildSelect('f-cr', p.crOpts, p.crDef);
+}
+
+function save() {
+  localStorage.setItem('kakeibo4', JSON.stringify(entries));
+}
+
+function fmt(n) {
+  return '¥' + Math.round(Math.abs(n)).toLocaleString();
+}
+
+function fmtSigned(n) {
+  if (n === 0) return '¥0';
+  return `${n < 0 ? '-' : '+'}¥${Math.round(Math.abs(n)).toLocaleString()}`;
+}
+
+function fmtS(n) {
+  if (n === 0) return '<span class="zero">—</span>';
+  const s = Math.round(Math.abs(n)).toLocaleString();
+  return n < 0 ? `<span class="neg">-¥${s}</span>` : `¥${s}`;
+}
+
+function fmtSC(n) {
+  if (n === 0) return '<span class="zero">—</span>';
+  const s = Math.round(Math.abs(n)).toLocaleString();
+  const c = n >= 0 ? 'pos' : 'neg';
+  return `<span class="${c}">${n < 0 ? '-' : ''}¥${s}</span>`;
+}
+
+function getMonths(n) {
+  const now = new Date();
+  const res = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    res.push(d);
+  }
+  return res;
+}
+
+function mLabel(d) {
+  return `${d.getMonth() + 1}月`;
+}
+
+function mEntries(d) {
+  const y = d.getFullYear();
+  const m = d.getMonth();
+  return entries.filter(e => {
+    const ed = new Date(e.date);
+    return ed.getFullYear() === y && ed.getMonth() === m;
+  });
+}
+
+function nowEntries() {
+  return mEntries(new Date());
+}
+
+function isIncome(e) {
+  return INCOME_ACCTS.includes(e.crCat);
+}
+
+function acctFlow(name, month) {
+  let t = 0;
+  mEntries(month).forEach(e => {
+    if (e.drCat === name) t += e.amount;
+    if (e.crCat === name) t -= e.amount;
+  });
+  return t;
+}
+
+function acctCumul(name, upToMonth) {
+  let t = 0;
+  const upTo = new Date(upToMonth.getFullYear(), upToMonth.getMonth() + 1, 0, 23, 59, 59);
+  entries.forEach(e => {
+    const d = new Date(e.date);
+    if (d > upTo) return;
+    if (e.drCat === name) t += e.amount;
+    if (e.crCat === name) t -= e.amount;
+  });
+  return t;
+}
+
+function getActiveTab() {
+  const tabs = ['record', 'list', 'graph', 'summary', 'fs'];
+  return tabs.find(t => document.getElementById('tb-' + t).classList.contains('active')) || 'record';
+}
+
+function refreshActiveTab() {
+  updateMetrics();
+  const active = getActiveTab();
+
+  if (active === 'list') renderList();
+  if (active === 'graph') renderGraph();
+  if (active === 'summary') renderSummary();
+  if (active === 'fs') {
+    if (!document.getElementById('fs-month').options.length) buildFSMonthOptions();
+    renderFS();
+  }
+}
+
+function updateMetrics() {
+  const es = nowEntries();
+  const inc = es.filter(isIncome).reduce((s, e) => s + e.amount, 0);
+  const exp = es.filter(e => EXPENSE_ACCTS.includes(e.drCat)).reduce((s, e) => s + e.amount, 0);
+
+  document.getElementById('m-inc').textContent = fmt(inc);
+  document.getElementById('m-exp').textContent = fmt(exp);
+
+  const bal = inc - exp;
+  const b = document.getElementById('m-bal');
+  b.textContent = fmtSigned(bal);
+  b.style.color = bal >= 0 ? 'var(--green)' : 'var(--red)';
+}
+
+function renderList() {
+  const y = viewMonth.getFullYear();
+  const m = viewMonth.getMonth();
+  document.getElementById('list-lbl').textContent = `${y}年${m + 1}月`;
+
+  const es = mEntries(viewMonth).sort((a, b) => {
+    const dateDiff = new Date(b.date) - new Date(a.date);
+    if (dateDiff !== 0) return dateDiff;
+    return String(b.id).localeCompare(String(a.id));
+  });
+
+  const el = document.getElementById('elist');
+
+  if (!es.length) {
+    el.innerHTML = '<div class="empty">この月の記録はありません</div>';
+    return;
+  }
+
+  el.innerHTML = es.map(e => `
+    <div class="entry">
+      <div class="etop">
+        <div>
+          <div class="ememo">${escapeHtml(e.desc || e.drCat)}</div>
+          <div class="edate">${escapeHtml(e.date)}</div>
+        </div>
+        <div class="eright-actions">
+          <div class="eamt">${fmt(e.amount)}</div>
+          <div class="eright">
+            <button class="editbtn" onclick="startEdit('${e.id}')">編集</button>
+            <button class="edel" onclick="delEntry('${e.id}')">×</button>
+          </div>
+        </div>
+      </div>
+      <div class="elegs">
+        <div class="leg dr">
+          <div class="leglbl">借方</div>
+          ${escapeHtml(e.drCat)}${e.drNote ? ' · ' + escapeHtml(e.drNote) : ''}
+        </div>
+        <div class="arrmid">→</div>
+        <div class="leg cr">
+          <div class="leglbl">貸方</div>
+          ${escapeHtml(e.crCat)}${e.crNote ? ' · ' + escapeHtml(e.crNote) : ''}
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function delEntry(id) {
+  if (!confirm('削除しますか？')) return;
+
+  entries = entries.filter(e => e.id !== id);
+  save();
+
+  if (editingId === id) {
+    cancelEdit(false);
+  }
+
+  refreshActiveTab();
+}
+
+function chMon(d) {
+  viewMonth.setMonth(viewMonth.getMonth() + d);
+  renderList();
+}
+
+function renderGraph() {
+  const months = getMonths(6);
+  const labels = months.map(mLabel);
+
+  const incD = months.map(m => mEntries(m).filter(isIncome).reduce((s, e) => s + e.amount, 0));
+  const expD = months.map(m => mEntries(m).filter(e => EXPENSE_ACCTS.includes(e.drCat)).reduce((s, e) => s + e.amount, 0));
+
+  if (gMonthly) gMonthly.destroy();
+  gMonthly = new Chart(document.getElementById('gc-monthly'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label:'収入', data:incD, backgroundColor:'rgba(29,158,117,0.7)', borderRadius:3 },
+        { label:'支出', data:expD, backgroundColor:'rgba(216,90,48,0.7)', borderRadius:3 }
+      ]
+    },
+    options: {
+      responsive:true,
+      maintainAspectRatio:false,
+      plugins:{ legend:{ display:false } },
+      scales:{
+        x:{ grid:{ display:false }, ticks:{ color:'#888', font:{ size:10 } } },
+        y:{ grid:{ color:'rgba(128,128,128,0.12)' }, ticks:{ color:'#888', font:{ size:9 }, callback:v=>'¥'+v.toLocaleString() } }
+      }
+    }
+  });
+
+  const curExp = nowEntries().filter(e => EXPENSE_ACCTS.includes(e.drCat));
+
+  const cm = {};
+  curExp.forEach(e => {
+    cm[e.drCat] = (cm[e.drCat] || 0) + e.amount;
+  });
+
+  const ce = Object.entries(cm).sort((a, b) => b[1] - a[1]);
+  const ct = ce.reduce((s, [,v]) => s + v, 0);
+
+  const bars = document.getElementById('gc-catbars');
+  bars.innerHTML = ce.length
+    ? ce.map(([c, v]) => `
+      <div class="cbar-row">
+        <div class="cbar-lbl" title="${escapeHtml(c)}">${escapeHtml(c)}</div>
+        <div class="cbar-trk">
+          <div class="cbar-fill" style="width:${ct ? Math.round(v / ct * 100) : 0}%;background:${catColors[c] || '#888'};"></div>
+        </div>
+        <div class="cbar-val">${fmt(v)}</div>
+      </div>
+    `).join('')
+    : '<div class="empty" style="padding:1rem;">データなし</div>';
+
+  const pm = {};
+  curExp.forEach(e => {
+    if ([...ASSET_ACCTS, ...LIAB_ACCTS].includes(e.crCat)) {
+      pm[e.crCat] = (pm[e.crCat] || 0) + e.amount;
+    }
+  });
+
+  const pe = Object.entries(pm).sort((a, b) => b[1] - a[1]);
+  const pt = pe.reduce((s, [,v]) => s + v, 0);
+
+  document.getElementById('gc-paylgd').innerHTML = pe.map(([p, v]) => `
+    <span><span class="ldot" style="background:${payColors[p] || '#888'};"></span>${escapeHtml(p)} ${pt ? Math.round(v / pt * 100) : 0}%</span>
+  `).join('');
+
+  if (gPay) {
+    gPay.destroy();
+    gPay = null;
+  }
+
+  if (pe.length) {
+    gPay = new Chart(document.getElementById('gc-pay'), {
+      type:'doughnut',
+      data:{
+        labels:pe.map(([p]) => p),
+        datasets:[{
+          data:pe.map(([,v]) => v),
+          backgroundColor:pe.map(([p]) => payColors[p] || '#888'),
+          borderWidth:0
+        }]
+      },
+      options:{
+        responsive:true,
+        maintainAspectRatio:false,
+        plugins:{ legend:{ display:false } },
+        cutout:'60%'
+      }
+    });
+  }
+}
+
+function renderSummary() {
+  const n = parseInt(document.getElementById('s-months').value, 10);
+  const months = getMonths(n);
+
+  const SCHEMA = [
+    {key:'asset', label:'資産', badge:'ba', accts:ASSET_ACCTS, sign:1},
+    {key:'liab', label:'負債', badge:'bl', accts:LIAB_ACCTS, sign:-1},
+    {key:'equity', label:'純資産', badge:'be', computed:true, formula:(a,l)=>a-l, src:['asset','liab']},
+    {key:'income', label:'収入', badge:'bi', accts:INCOME_ACCTS, sign:-1},
+    {key:'expense', label:'費用', badge:'bx', accts:EXPENSE_ACCTS, sign:1},
+    {key:'profit', label:'利益', badge:'bp', computed:true, formula:(i,x)=>i-x, src:['income','expense']}
+  ];
+
+  const totals = {};
+  const cols = '<col class="cl">' + months.map(() => '<col class="cm">').join('');
+  const head = '<thead><tr><th>科目</th>' + months.map(m => `<th>${mLabel(m)}</th>`).join('') + '</tr></thead>';
+
+  let body = '<tbody>';
+
+  SCHEMA.forEach(g => {
+    if (g.computed) {
+      const s1 = totals[g.src[0]] || months.map(() => 0);
+      const s2 = totals[g.src[1]] || months.map(() => 0);
+      const tv = months.map((_, i) => g.formula(s1[i], s2[i]));
+      totals[g.key] = tv;
+
+      body += `<tr class="ghdr"><td><span class="badge ${g.badge}">${g.label}</span></td>${months.map(() => '<td></td>').join('')}</tr>`;
+      body += `<tr class="sub"><td style="padding-left:16px;">${g.label}</td>${tv.map(v => `<td>${fmtSC(v)}</td>`).join('')}</tr>`;
+      return;
+    }
+
+    body += `<tr class="ghdr"><td><span class="badge ${g.badge}">${g.label}</span></td>${months.map(() => '<td></td>').join('')}</tr>`;
+
+    const at = months.map(() => 0);
+
+    g.accts.forEach(a => {
+      const vs = months.map(m => acctFlow(a, m) * g.sign);
+      if (vs.every(v => v === 0)) return;
+
+      vs.forEach((v, i) => at[i] += v);
+      body += `<tr class="acct"><td>${escapeHtml(a)}</td>${vs.map(v => `<td>${fmtS(v)}</td>`).join('')}</tr>`;
+    });
+
+    totals[g.key] = at;
+    body += `<tr class="sub"><td style="padding-left:16px;">${g.label}合計</td>${at.map(v => `<td>${fmtSC(v)}</td>`).join('')}</tr>`;
+  });
+
+  body += '</tbody>';
+  document.getElementById('stbl').innerHTML = `<colgroup>${cols}</colgroup>${head}${body}`;
+}
+
+function buildFSMonthOptions() {
+  const sel = document.getElementById('fs-month');
+  const months = getMonths(12);
+
+  sel.innerHTML = months.map((m, i) => {
+    const y = m.getFullYear();
+    const mo = m.getMonth();
+    return `<option value="${y}-${mo}" ${i === months.length - 1 ? 'selected' : ''}>${y}年${mo + 1}月</option>`;
+  }).join('');
+}
+
+function getSelectedMonth() {
+  const v = document.getElementById('fs-month').value.split('-');
+  return new Date(parseInt(v[0], 10), parseInt(v[1], 10), 1);
+}
+
+function renderBS() {
+  const baseMonth = getSelectedMonth();
+
+  function bsRows(accts, signFn) {
+    let total = 0;
+    const rows = [];
+
+    accts.forEach(a => {
+      const v = signFn(acctCumul(a, baseMonth));
+      if (v !== 0) {
+        rows.push({ name:a, val:v });
+        total += v;
+      }
+    });
+
+    return { rows, total };
+  }
+
+  const assetG = bsRows(ASSET_ACCTS, v => v);
+  const liabG = bsRows(LIAB_ACCTS, v => -v);
+  const equity = assetG.total - liabG.total;
+
+  function colHtml(title, badge, sections, footLabel, footVal) {
+    let h = `<div class="bs-col"><div class="bs-hdr"><span class="badge ${badge}">${title}</span></div>`;
+
+    sections.forEach(s => {
+      if (s.sectionLabel) h += `<div class="bs-row sec-hdr">${s.sectionLabel}</div>`;
+      s.rows.forEach(r => {
+        h += `<div class="bs-row acct"><span>${escapeHtml(r.name)}</span><span class="${r.val >= 0 ? 'pos' : 'neg'}">${fmt(r.val)}</span></div>`;
+      });
+      h += `<div class="bs-row sub"><span>${s.label}合計</span><span class="${s.total >= 0 ? 'pos' : 'neg'}">${fmt(s.total)}</span></div>`;
+    });
+
+    h += `<div class="bs-row sub" style="border-top:1px solid var(--border2);"><span>${footLabel}</span><span class="${footVal >= 0 ? 'pos' : 'neg'}">${fmt(footVal)}</span></div>`;
+    return h + '</div>';
+  }
+
+  document.getElementById('bs-wrap').innerHTML =
+    colHtml('資産', 'ba', [{label:'資産', ...assetG}], '資産合計', assetG.total) +
+    colHtml(
+      '負債・純資産',
+      'be',
+      [
+        {sectionLabel:'負債', label:'負債', ...liabG},
+        {sectionLabel:'純資産', label:'純資産', rows:[{name:'純資産', val:equity}], total:equity}
+      ],
+      '負債＋純資産合計',
+      liabG.total + equity
+    );
+
+  const months = getMonths(12);
+  const eqData = months.map(m => {
+    const a = ASSET_ACCTS.reduce((s, n) => s + acctCumul(n, m), 0);
+    const l = LIAB_ACCTS.reduce((s, n) => s - acctCumul(n, m), 0);
+    return a - l;
+  });
+
+  if (gBS) gBS.destroy();
+  gBS = new Chart(document.getElementById('bs-chart'), {
+    type:'line',
+    data:{
+      labels:months.map(mLabel),
+      datasets:[{
+        label:'純資産',
+        data:eqData,
+        borderColor:'#378ADD',
+        backgroundColor:'rgba(55,138,221,0.08)',
+        borderWidth:2,
+        pointRadius:3,
+        pointBackgroundColor:'#378ADD',
+        tension:0.3,
+        fill:true
+      }]
+    },
+    options:{
+      responsive:true,
+      maintainAspectRatio:false,
+      plugins:{ legend:{ display:false } },
+      scales:{
+        x:{ grid:{ display:false }, ticks:{ color:'#888', font:{ size:10 }, autoSkip:false, maxRotation:0 } },
+        y:{ grid:{ color:'rgba(128,128,128,0.12)' }, ticks:{ color:'#888', font:{ size:9 }, callback:v=>'¥'+v.toLocaleString() } }
+      }
+    }
+  });
+}
+
+function renderPL() {
+  const baseMonth = getSelectedMonth();
+  const es = mEntries(baseMonth);
+
+  const incRows = [];
+  let incTotal = 0;
+  INCOME_ACCTS.forEach(a => {
+    const v = es.filter(e => e.crCat === a).reduce((s, e) => s + e.amount, 0);
+    if (v > 0) {
+      incRows.push({ name:a, val:v });
+      incTotal += v;
+    }
+  });
+
+  const expRows = [];
+  let expTotal = 0;
+  EXPENSE_ACCTS.forEach(a => {
+    const v = es.filter(e => e.drCat === a).reduce((s, e) => s + e.amount, 0);
+    if (v > 0) {
+      expRows.push({ name:a, val:v });
+      expTotal += v;
+    }
+  });
+
+  const profit = incTotal - expTotal;
+
+  let h = '';
+  h += '<div class="pl-row hdr"><span class="badge bi">収入</span></div>';
+  if (incRows.length) {
+    incRows.forEach(r => {
+      h += `<div class="pl-row acct"><span>${escapeHtml(r.name)}</span><span class="pos">${fmt(r.val)}</span></div>`;
+    });
+  } else {
+    h += '<div class="pl-row acct" style="color:var(--text2);">（なし）</div>';
+  }
+  h += `<div class="pl-row sub"><span>収入合計</span><span class="pos">${fmt(incTotal)}</span></div>`;
+
+  h += '<div class="pl-row hdr"><span class="badge bx">費用</span></div>';
+  if (expRows.length) {
+    expRows.forEach(r => {
+      h += `<div class="pl-row acct"><span>${escapeHtml(r.name)}</span><span class="neg">${fmt(r.val)}</span></div>`;
+    });
+  } else {
+    h += '<div class="pl-row acct" style="color:var(--text2);">（なし）</div>';
+  }
+  h += `<div class="pl-row sub"><span>費用合計</span><span class="neg">${fmt(expTotal)}</span></div>`;
+
+  h += `
+    <div class="pl-row total">
+      <span><span class="badge bp">当月利益</span></span>
+      <span class="${profit >= 0 ? 'pos' : 'neg'}" style="font-size:15px;">${profit < 0 ? '-' : ''}${fmt(profit)}</span>
+    </div>
+  `;
+
+  document.getElementById('pl-wrap').innerHTML = h;
+
+  const months = getMonths(12);
+  const incD = months.map(m => mEntries(m).filter(isIncome).reduce((s, e) => s + e.amount, 0));
+  const expD = months.map(m => mEntries(m).filter(e => EXPENSE_ACCTS.includes(e.drCat)).reduce((s, e) => s + e.amount, 0));
+  const profD = months.map((_, i) => incD[i] - expD[i]);
+
+  document.getElementById('pl-lgd').innerHTML =
+    `<span><span class="ldot" style="background:#1D9E75;"></span>収入</span>
+     <span><span class="ldot" style="background:#D85A30;"></span>費用</span>
+     <span><span class="ldot" style="background:#378ADD;"></span>利益</span>`;
+
+  if (gPL) gPL.destroy();
+  gPL = new Chart(document.getElementById('pl-chart'), {
+    type:'bar',
+    data:{
+      labels:months.map(mLabel),
+      datasets:[
+        { label:'収入', data:incD, backgroundColor:'rgba(29,158,117,0.6)', borderRadius:3, order:2 },
+        { label:'費用', data:expD, backgroundColor:'rgba(216,90,48,0.6)', borderRadius:3, order:2 },
+        { label:'利益', data:profD, type:'line', borderColor:'#378ADD', backgroundColor:'transparent', borderWidth:2, pointRadius:3, pointBackgroundColor:'#378ADD', tension:0.3, order:1 }
+      ]
+    },
+    options:{
+      responsive:true,
+      maintainAspectRatio:false,
+      plugins:{ legend:{ display:false } },
+      scales:{
+        x:{ grid:{ display:false }, ticks:{ color:'#888', font:{ size:10 }, autoSkip:false, maxRotation:0 } },
+        y:{ grid:{ color:'rgba(128,128,128,0.12)' }, ticks:{ color:'#888', font:{ size:9 }, callback:v=>'¥'+v.toLocaleString() } }
+      }
+    }
+  });
+}
+
+function renderFS() {
+  renderBS();
+  renderPL();
+}
+
+function swFS(t) {
+  document.querySelectorAll('.fs-tab').forEach((el, i) => {
+    el.classList.toggle('active', ['bs', 'pl'][i] === t);
+  });
+  document.querySelectorAll('.fs-sec').forEach(el => el.classList.remove('active'));
+  document.getElementById('fs-' + t).classList.add('active');
+}
+
+function sw(t) {
+  document.querySelectorAll('.tab-btn').forEach((el, i) => {
+    el.classList.toggle('active', ['record','list','graph','summary','fs'][i] === t);
+  });
+
+  document.querySelectorAll('.sec').forEach(el => el.classList.remove('active'));
+  document.getElementById('t-' + t).classList.add('active');
+
+  if (t === 'list') renderList();
+  if (t === 'graph') renderGraph();
+  if (t === 'summary') renderSummary();
+  if (t === 'fs') {
+    buildFSMonthOptions();
+    renderFS();
+  }
+}
+
+function addEntry() {
+  const date = document.getElementById('f-date').value;
+  const amount = parseFloat(document.getElementById('f-amt').value);
+  const desc = document.getElementById('f-desc').value.trim();
+  const drCat = document.getElementById('f-dr').value;
+  const drNote = document.getElementById('f-dr-note').value.trim();
+  const crCat = document.getElementById('f-cr').value;
+  const crNote = document.getElementById('f-cr-note').value.trim();
+
+  if (!date || !amount || amount <= 0) {
+    alert('日付と金額を入力してください');
+    return;
+  }
+
+  const data = { date, amount, desc, drCat, drNote, crCat, crNote, preset: currentPreset };
+
+  if (editingId) {
+    const idx = entries.findIndex(e => e.id === editingId);
+    if (idx === -1) {
+      alert('編集対象が見つかりませんでした');
+      cancelEdit(false);
+      return;
+    }
+
+    entries[idx] = { ...entries[idx], ...data };
+    save();
+    cancelEdit(false);
+    refreshActiveTab();
+    alert('更新しました！');
+    return;
+  }
+
+  entries.push({
+    id: `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+    ...data
+  });
+
+  save();
+  refreshActiveTab();
+  resetForm();
+  alert('追加しました！');
+}
+
+function startEdit(id) {
+  const entry = entries.find(e => e.id === id);
+  if (!entry) {
+    alert('編集対象が見つかりませんでした');
+    return;
+  }
+
+  editingId = id;
+  setPreset(entry.preset || guessPreset(entry));
+
+  document.getElementById('f-date').value = entry.date || '';
+  document.getElementById('f-amt').value = entry.amount ?? '';
+  document.getElementById('f-desc').value = entry.desc || '';
+  document.getElementById('f-dr').value = entry.drCat || '';
+  document.getElementById('f-dr-note').value = entry.drNote || '';
+  document.getElementById('f-cr').value = entry.crCat || '';
+  document.getElementById('f-cr-note').value = entry.crNote || '';
+
+  document.getElementById('submit-btn').textContent = '更新';
+  const editBar = document.getElementById('edit-bar');
+  editBar.classList.add('show');
+  editBar.innerHTML = `編集中です。<br>${escapeHtml(entry.desc || entry.drCat)} / ${escapeHtml(entry.date)} / ${fmt(entry.amount)}`;
+
+  sw('record');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function cancelEdit(showAlert = false) {
+  editingId = null;
+  document.getElementById('submit-btn').textContent = '追加';
+  document.getElementById('edit-bar').classList.remove('show');
+  document.getElementById('edit-bar').textContent = '';
+  resetForm();
+
+  if (showAlert) {
+    alert('編集をキャンセルしました');
+  }
+}
+
+function resetForm() {
+  document.getElementById('f-date').value = new Date().toISOString().split('T')[0];
+  document.getElementById('f-amt').value = '';
+  document.getElementById('f-desc').value = '';
+  document.getElementById('f-dr-note').value = '';
+  document.getElementById('f-cr-note').value = '';
+  setPreset('expense');
+}
+
+function guessPreset(entry) {
+  if (INCOME_ACCTS.includes(entry.crCat) && ASSET_ACCTS.includes(entry.drCat)) return 'income';
+  if (LIAB_ACCTS.includes(entry.drCat) && ASSET_ACCTS.includes(entry.crCat)) return 'repay';
+  if (ASSET_ACCTS.includes(entry.drCat) && ASSET_ACCTS.includes(entry.crCat)) return 'transfer';
+  return 'expense';
+}
+
+function exportData() {
+  const payload = {
+    app: 'kakeibo',
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    entries
+  };
+
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+
+  const d = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  const filename = `kakeibo-backup-${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.json`;
+
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function importData(event) {
+  const file = event.target.files && event.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const raw = JSON.parse(e.target.result);
+      const importedEntries = Array.isArray(raw) ? raw : raw.entries;
+
+      if (!Array.isArray(importedEntries)) {
+        throw new Error('バックアップ形式が不正です');
+      }
+
+      const normalized = importedEntries.map(normalizeEntry);
+      const invalid = normalized.some(v => !v);
+
+      if (invalid) {
+        throw new Error('読み込めないデータが含まれています');
+      }
+
+      if (!confirm(`現在のデータを消して、${normalized.length}件のバックアップで置き換えますか？`)) {
+        event.target.value = '';
+        return;
+      }
+
+      entries = normalized;
+      save();
+      cancelEdit(false);
+      refreshActiveTab();
+      alert('バックアップを読み込みました');
+    } catch (err) {
+      alert('読み込みに失敗しました: ' + err.message);
+    } finally {
+      event.target.value = '';
+    }
+  };
+  reader.readAsText(file);
+}
+
+function normalizeEntry(e) {
+  if (!e || typeof e !== 'object') return null;
+  if (!e.date || !e.drCat || !e.crCat) return null;
+
+  const amount = Number(e.amount);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+
+  return {
+    id: String(e.id || `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`),
+    date: String(e.date),
+    amount,
+    desc: String(e.desc || ''),
+    drCat: String(e.drCat),
+    drNote: String(e.drNote || ''),
+    crCat: String(e.crCat),
+    crNote: String(e.crNote || ''),
+    preset: String(e.preset || guessPreset(e))
+  };
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, s => ({
+    '&':'&amp;',
+    '<':'&lt;',
+    '>':'&gt;',
+    '"':'&quot;',
+    "'":'&#39;'
+  }[s]));
+}
+
+setPreset('expense');
+document.getElementById('f-date').value = new Date().toISOString().split('T')[0];
+updateMetrics();
