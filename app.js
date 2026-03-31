@@ -244,7 +244,7 @@ function saveUiPrefs() {
 function setQuickDate(offsetDays) {
   const d = new Date();
   d.setDate(d.getDate() + offsetDays);
-  document.getElementById('f-date').value = d.toISOString().split('T')[0];
+  document.getElementById('f-date').value = formatLocalDate(d);
 }
 
 function applyLastUsedForm() {
@@ -356,6 +356,13 @@ function selectQuickCredit(name) {
 
 function moveFocusAfterAdd() {
   document.getElementById('f-amt').focus();
+}
+
+function formatLocalDate(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 function setupFormInteractions() {
@@ -979,7 +986,7 @@ function cancelEdit(showAlert = false) {
 }
 
 function resetForm() {
-  document.getElementById('f-date').value = new Date().toISOString().split('T')[0];
+  document.getElementById('f-date').value = formatLocalDate(new Date());
   document.getElementById('f-amt').value = '';
   document.getElementById('f-desc').value = '';
   document.getElementById('f-dr-note').value = '';
@@ -1221,7 +1228,7 @@ function escapeJs(str){
 }
 
 setPreset(uiPrefs.lastPreset || 'expense');
-document.getElementById('f-date').value = new Date().toISOString().split('T')[0];
+document.getElementById('f-date').value = formatLocalDate(new Date());
 updateMetrics();
 renderSettings();
 updateListCategoryFilterOptions();
