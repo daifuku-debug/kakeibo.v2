@@ -15,30 +15,73 @@ const defaultAccounts = {
   expense: ['食費','日用品費','家賃','水道代','ガス代','電気代','交通費','通信費','娯楽費','外食費','自己投資','沙奈費','交際費','旅費','被服費','美容費','保険','医療費','特別費','生活費','雑費','仕送り','税金等','マイナス帳尻合わせ']
 };
 
-let accountSettings = loadAccountSettings();
-
-const catColors = {
-  食費:'#378ADD',日用品費:'#1D9E75',家賃:'#533AB7',水道代:'#185FA5',ガス代:'#BA7517',電気代:'#EF9F27',
-  交通費:'#0F6E56',通信費:'#D4537E',娯楽費:'#D85A30',外食費:'#993C1D',自己投資:'#639922',沙奈費:'#3C3489',
-  交際費:'#5DCAA5',旅費:'#7F77DD',被服費:'#ED93B1',美容費:'#D4537E',保険:'#888780',医療費:'#E24B4A',
-  特別費:'#FA9F27',生活費:'#1D9E75',雑費:'#B4B2A9',仕送り:'#533AB7',税金等:'#444441','マイナス帳尻合わせ':'#5F5E5A'
+const defaultExpenseColors = {
+  食費:'#378ADD',
+  日用品費:'#1D9E75',
+  家賃:'#533AB7',
+  水道代:'#185FA5',
+  ガス代:'#BA7517',
+  電気代:'#EF9F27',
+  交通費:'#0F6E56',
+  通信費:'#D4537E',
+  娯楽費:'#D85A30',
+  外食費:'#993C1D',
+  自己投資:'#639922',
+  沙奈費:'#3C3489',
+  交際費:'#5DCAA5',
+  旅費:'#7F77DD',
+  被服費:'#ED93B1',
+  美容費:'#D4537E',
+  保険:'#888780',
+  医療費:'#E24B4A',
+  特別費:'#FA9F27',
+  生活費:'#1D9E75',
+  雑費:'#B4B2A9',
+  仕送り:'#533AB7',
+  税金等:'#444441',
+  'マイナス帳尻合わせ':'#5F5E5A'
 };
 
+let accountSettings = loadAccountSettings();
+
 const payColors = {
-  現金:'#888780','交通・電子マネー':'#533AB7',SBI新生銀行:'#378ADD',住信SBIネット銀行:'#185FA5',
-  ゆうちょ銀行:'#E24B4A',三井住友銀行:'#1D9E75',楽天銀行:'#D85A30',中国銀行:'#BA7517',
-  クレジットカード:'#3C3489',Paidy:'#D4537E'
+  現金:'#888780',
+  '交通・電子マネー':'#533AB7',
+  SBI新生銀行:'#378ADD',
+  住信SBIネット銀行:'#185FA5',
+  ゆうちょ銀行:'#E24B4A',
+  三井住友銀行:'#1D9E75',
+  楽天銀行:'#D85A30',
+  中国銀行:'#BA7517',
+  クレジットカード:'#3C3489',
+  Paidy:'#D4537E'
 };
 
 let currentPreset = 'expense';
 
-function normalizeAccountBlock(items){
+function randomColor() {
+  const palette = ['#378ADD','#1D9E75','#533AB7','#185FA5','#BA7517','#EF9F27','#0F6E56','#D4537E','#D85A30','#639922','#7F77DD','#ED93B1','#888780','#E24B4A','#5F5E5A'];
+  return palette[Math.floor(Math.random() * palette.length)];
+}
+
+function normalizeAccountBlock(items, type){
   if (!Array.isArray(items)) return [];
   return items
     .map(item => {
-      if (typeof item === 'string') return { name:item, active:true };
+      if (typeof item === 'string') {
+        return type === 'expense'
+          ? { name:item, active:true, color:defaultExpenseColors[item] || randomColor() }
+          : { name:item, active:true };
+      }
       if (item && typeof item.name === 'string') {
-        return { name:item.name.trim(), active:item.active !== false };
+        const normalized = {
+          name:item.name.trim(),
+          active:item.active !== false
+        };
+        if (type === 'expense') {
+          normalized.color = item.color || defaultExpenseColors[item.name] || randomColor();
+        }
+        return normalized;
       }
       return null;
     })
@@ -53,14 +96,18 @@ function loadAccountSettings(){
       asset: defaultAccounts.asset.map(name => ({ name, active:true })),
       liability: defaultAccounts.liability.map(name => ({ name, active:true })),
       income: defaultAccounts.income.map(name => ({ name, active:true })),
-      expense: defaultAccounts.expense.map(name => ({ name, active:true }))
+      expense: defaultAccounts.expense.map(name => ({
+        name,
+        active:true,
+        color: defaultExpenseColors[name] || randomColor()
+      }))
     };
   }
   return {
-    asset: normalizeAccountBlock(raw.asset || defaultAccounts.asset),
-    liability: normalizeAccountBlock(raw.liability || defaultAccounts.liability),
-    income: normalizeAccountBlock(raw.income || defaultAccounts.income),
-    expense: normalizeAccountBlock(raw.expense || defaultAccounts.expense)
+    asset: normalizeAccountBlock(raw.asset || defaultAccounts.asset, 'asset'),
+    liability: normalizeAccountBlock(raw.liability || defaultAccounts.liability, 'liability'),
+    income: normalizeAccountBlock(raw.income || defaultAccounts.income, 'income'),
+    expense: normalizeAccountBlock(raw.expense || defaultAccounts.expense, 'expense')
   };
 }
 
@@ -71,6 +118,11 @@ function saveAccountSettings(){
 function getAccounts(type, includeInactive = false){
   const list = accountSettings[type] || [];
   return includeInactive ? list.map(a => a.name) : list.filter(a => a.active).map(a => a.name);
+}
+
+function getExpenseColor(name){
+  const found = (accountSettings.expense || []).find(a => a.name === name);
+  return found?.color || defaultExpenseColors[name] || '#888';
 }
 
 function hasAccount(type, name){
@@ -405,7 +457,7 @@ function renderGraph() {
       <div class="cbar-row">
         <div class="cbar-lbl" title="${escapeHtml(c)}">${escapeHtml(c)}</div>
         <div class="cbar-trk">
-          <div class="cbar-fill" style="width:${ct ? Math.round(v/ct*100) : 0}%;background:${catColors[c] || '#888'};"></div>
+          <div class="cbar-fill" style="width:${ct ? Math.round(v/ct*100) : 0}%;background:${getExpenseColor(c)};"></div>
         </div>
         <div class="cbar-val">${fmt(v)}</div>
       </div>
@@ -747,7 +799,7 @@ function guessPreset(entry) {
 function exportData() {
   const payload = {
     app:'kakeibo',
-    version:2,
+    version:3,
     exportedAt:new Date().toISOString(),
     entries,
     accountSettings
@@ -791,10 +843,10 @@ function importData(event) {
       entries = normalized;
       if (raw.accountSettings) {
         accountSettings = {
-          asset: normalizeAccountBlock(raw.accountSettings.asset),
-          liability: normalizeAccountBlock(raw.accountSettings.liability),
-          income: normalizeAccountBlock(raw.accountSettings.income),
-          expense: normalizeAccountBlock(raw.accountSettings.expense)
+          asset: normalizeAccountBlock(raw.accountSettings.asset, 'asset'),
+          liability: normalizeAccountBlock(raw.accountSettings.liability, 'liability'),
+          income: normalizeAccountBlock(raw.accountSettings.income, 'income'),
+          expense: normalizeAccountBlock(raw.accountSettings.expense, 'expense')
         };
         saveAccountSettings();
       }
@@ -845,9 +897,23 @@ function renderSettings(){
 
     mount.innerHTML = list.map(item => {
       const used = isAccountUsed(type, item.name);
+      const colorControl = type === 'expense'
+        ? `
+          <span class="color-dot" style="background:${item.color || '#888'};"></span>
+          <input
+            class="color-picker"
+            type="color"
+            value="${item.color || '#888888'}"
+            onchange="updateExpenseColor('${escapeJs(item.name)}', this.value)"
+            aria-label="${escapeHtml(item.name)}の色"
+          >
+        `
+        : '';
+
       return `
         <div class="acct-row">
           <div class="acct-name-wrap">
+            ${colorControl}
             <span class="acct-name">${escapeHtml(item.name)}</span>
             <span class="acct-tag ${item.active ? 'on' : 'off'}">${item.active ? '有効' : '無効'}</span>
             ${used ? '<span class="acct-meta">使用済み</span>' : '<span class="acct-meta">未使用</span>'}
@@ -887,7 +953,12 @@ function addAccount(type){
     return;
   }
 
-  accountSettings[type].push({ name, active:true });
+  if (type === 'expense') {
+    accountSettings[type].push({ name, active:true, color:randomColor() });
+  } else {
+    accountSettings[type].push({ name, active:true });
+  }
+
   saveAccountSettings();
   renderSettings();
   refreshAccountDrivenUI();
@@ -919,6 +990,17 @@ function enableAccount(type, name){
   saveAccountSettings();
   renderSettings();
   refreshAccountDrivenUI();
+}
+
+function updateExpenseColor(name, color){
+  const target = accountSettings.expense.find(a => a.name === name);
+  if (!target) return;
+  target.color = color;
+  saveAccountSettings();
+  renderSettings();
+
+  const active = getActiveTab();
+  if (active === 'graph') renderGraph();
 }
 
 function escapeHtml(str) {

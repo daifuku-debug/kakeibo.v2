@@ -174,3 +174,8 @@ tr.acct td:first-child{padding-left:18px;}
 .acct-add-row{display:flex;gap:8px;padding:12px;border-top:0.5px solid var(--border);background:var(--bg2);}
 .acct-add-row input{flex:1;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:14px;background:var(--bg);color:var(--text);}
 .acct-add-row button{padding:10px 14px;border:none;background:var(--blue);color:#fff;border-radius:var(--radius-sm);font-size:13px;font-weight:600;cursor:pointer;}
+
+.color-dot{width:12px;height:12px;border-radius:999px;border:1px solid var(--border2);display:inline-block;flex-shrink:0;}
+.color-picker{width:36px;height:28px;border:none;background:none;padding:0;cursor:pointer;}
+.color-picker::-webkit-color-swatch-wrapper{padding:0;}
+.color-picker::-webkit-color-swatch{border:none;border-radius:6px;}
