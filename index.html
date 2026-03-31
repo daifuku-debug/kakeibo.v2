@@ -45,6 +45,12 @@
 
       <div class="hint" id="f-hint"></div>
 
+      <div class="quick-row">
+        <button type="button" class="quick-btn" onclick="setQuickDate(0)">今日</button>
+        <button type="button" class="quick-btn" onclick="setQuickDate(-1)">昨日</button>
+        <button type="button" class="quick-btn" onclick="applyLastUsedForm()">前回入力を反映</button>
+      </div>
+
       <div class="fg2">
         <div class="fgrp">
           <label>日付</label>
@@ -109,6 +115,18 @@
         <button onclick="chMon(-1)">◀</button>
         <button onclick="chMon(1)">▶</button>
       </div>
+    </div>
+    <div class="list-tools">
+      <input
+        type="text"
+        id="list-search"
+        class="list-search"
+        placeholder="メモ・科目で検索"
+        oninput="renderList()"
+      >
+      <select id="list-category-filter" class="list-filter" onchange="renderList()">
+        <option value="">すべての科目</option>
+      </select>
     </div>
     <div id="elist"></div>
   </div>

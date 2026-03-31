@@ -7,6 +7,7 @@ let gPay = null;
 let gBS = null;
 let gPL = null;
 let editingId = null;
+let uiPrefs = JSON.parse(localStorage.getItem('kakeibo_ui_prefs') || '{}');
 
 const defaultAccounts = {
   asset: ['現金','交通・電子マネー','SBI新生銀行','住信SBIネット銀行','ゆうちょ銀行','三井住友銀行','楽天銀行','中国銀行','NISA','固定資産','その他資産'],
@@ -231,6 +232,61 @@ function setPreset(key) {
 }
 
 function saveEntries() {
+  function saveUiPrefs() {
+    localStorage.setItem('kakeibo_ui_prefs', JSON.stringify(uiPrefs));
+  }
+  
+  function setQuickDate(offsetDays) {
+    const d = new Date();
+    d.setDate(d.getDate() + offsetDays);
+    document.getElementById('f-date').value = d.toISOString().split('T')[0];
+  }
+  
+  function applyLastUsedForm() {
+    if (!uiPrefs.lastPreset && !uiPrefs.lastCreditByPreset) {
+      alert('前回入力の記録がありません');
+      return;
+    }
+  
+    const preset = uiPrefs.lastPreset || 'expense';
+    setPreset(preset);
+  
+    const rememberedCredit = uiPrefs.lastCreditByPreset?.[preset];
+    if (rememberedCredit) {
+      const cr = document.getElementById('f-cr');
+      if ([...cr.options].some(o => o.value === rememberedCredit)) {
+        cr.value = rememberedCredit;
+      }
+    }
+  
+    const rememberedDebit = uiPrefs.lastDebitByPreset?.[preset];
+    if (rememberedDebit) {
+      const dr = document.getElementById('f-dr');
+      if ([...dr.options].some(o => o.value === rememberedDebit)) {
+        dr.value = rememberedDebit;
+      }
+    }
+  }
+  
+  function updateListCategoryFilterOptions() {
+    const sel = document.getElementById('list-category-filter');
+    if (!sel) return;
+  
+    const current = sel.value;
+    const categories = Array.from(new Set([
+      ...getAccounts('expense', true),
+      ...getAccounts('income', true),
+      ...getAccounts('asset', true),
+      ...getAccounts('liability', true)
+    ])).sort((a, b) => a.localeCompare(b, 'ja'));
+  
+    sel.innerHTML = `<option value="">すべての科目</option>` +
+      categories.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+  
+    if (categories.includes(current)) {
+      sel.value = current;
+    }
+  }
   localStorage.setItem('kakeibo4', JSON.stringify(entries));
 }
 
@@ -337,10 +393,11 @@ function refreshAccountDrivenUI(){
     document.getElementById('f-dr').value = editing.drCat || '';
     document.getElementById('f-cr').value = editing.crCat || '';
   } else {
-    setPreset(currentPreset);
+    setPreset(uiPrefs.lastPreset || currentPreset);
   }
   renderSettings();
   updateMetrics();
+  updateListCategoryFilterOptions();
 }
 
 function updateMetrics() {
@@ -362,15 +419,34 @@ function renderList() {
   const m = viewMonth.getMonth();
   document.getElementById('list-lbl').textContent = `${y}年${m + 1}月`;
 
-  const es = mEntries(viewMonth).sort((a, b) => {
-    const dateDiff = new Date(b.date) - new Date(a.date);
-    if (dateDiff !== 0) return dateDiff;
-    return String(b.id).localeCompare(String(a.id));
-  });
+  updateListCategoryFilterOptions();
+
+  const keyword = (document.getElementById('list-search')?.value || '').trim().toLowerCase();
+  const categoryFilter = document.getElementById('list-category-filter')?.value || '';
+
+  const es = mEntries(viewMonth)
+    .filter(e => {
+      const matchesKeyword = !keyword || [
+        e.desc || '',
+        e.drCat || '',
+        e.crCat || '',
+        e.drNote || '',
+        e.crNote || ''
+      ].join(' ').toLowerCase().includes(keyword);
+
+      const matchesCategory = !categoryFilter || e.drCat === categoryFilter || e.crCat === categoryFilter;
+
+      return matchesKeyword && matchesCategory;
+    })
+    .sort((a, b) => {
+      const dateDiff = new Date(b.date) - new Date(a.date);
+      if (dateDiff !== 0) return dateDiff;
+      return String(b.id).localeCompare(String(a.id));
+    });
 
   const el = document.getElementById('elist');
   if (!es.length) {
-    el.innerHTML = '<div class="empty">この月の記録はありません</div>';
+    el.innerHTML = '<div class="empty">条件に合う記録はありません</div>';
     return;
   }
 
@@ -718,6 +794,13 @@ function addEntry() {
 
   const data = { date, amount, desc, drCat, drNote, crCat, crNote, preset:currentPreset };
 
+  uiPrefs.lastPreset = currentPreset;
+  uiPrefs.lastCreditByPreset = uiPrefs.lastCreditByPreset || {};
+  uiPrefs.lastDebitByPreset = uiPrefs.lastDebitByPreset || {};
+  uiPrefs.lastCreditByPreset[currentPreset] = crCat;
+  uiPrefs.lastDebitByPreset[currentPreset] = drCat;
+  saveUiPrefs();
+
   if (editingId) {
     const idx = entries.findIndex(e => e.id === editingId);
     if (idx === -1) {
@@ -737,6 +820,7 @@ function addEntry() {
   saveEntries();
   refreshActiveTab();
   resetForm();
+  applyLastUsedForm();
   alert('追加しました！');
 }
 
@@ -782,7 +866,7 @@ function resetForm() {
   document.getElementById('f-desc').value = '';
   document.getElementById('f-dr-note').value = '';
   document.getElementById('f-cr-note').value = '';
-  setPreset('expense');
+  setPreset(uiPrefs.lastPreset || 'expense');
 }
 
 function guessPreset(entry) {
@@ -1017,7 +1101,22 @@ function escapeJs(str){
   return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 
-setPreset('expense');
+setPreset(uiPrefs.lastPreset || 'expense');
 document.getElementById('f-date').value = new Date().toISOString().split('T')[0];
 updateMetrics();
 renderSettings();
+updateListCategoryFilterOptions();
+
+document.getElementById('f-amt').addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    document.getElementById('f-desc').focus();
+  }
+});
+
+document.getElementById('f-desc').addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    addEntry();
+  }
+});

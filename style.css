@@ -179,3 +179,10 @@ tr.acct td:first-child{padding-left:18px;}
 .color-picker{width:36px;height:28px;border:none;background:none;padding:0;cursor:pointer;}
 .color-picker::-webkit-color-swatch-wrapper{padding:0;}
 .color-picker::-webkit-color-swatch{border:none;border-radius:6px;}
+
+.quick-row{display:flex;gap:8px;flex-wrap:wrap;margin:-4px 0 12px;}
+.quick-btn{padding:8px 12px;border:1px solid var(--border2);background:var(--bg);color:var(--text);border-radius:999px;font-size:12px;cursor:pointer;}
+.quick-btn:active{opacity:.8;}
+
+.list-tools{display:flex;gap:8px;flex-direction:column;margin-bottom:12px;}
+.list-search,.list-filter{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:14px;background:var(--bg);color:var(--text);}
