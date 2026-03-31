@@ -1,4 +1,4 @@
-const CACHE_NAME = 'kakeibo-pwa-v1';
+const CACHE_NAME = 'kakeibo-pwa-v2';
 const urlsToCache = [
   './',
   './index.html',
