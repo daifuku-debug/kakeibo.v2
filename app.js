@@ -229,65 +229,177 @@ function setPreset(key) {
   document.getElementById('f-cr-label').textContent = p.crLabel;
   buildSelect('f-dr', p.drOpts, p.drDef);
   buildSelect('f-cr', p.crOpts, p.crDef);
+
+  renderQuickCreditButtons();
 }
 
 function saveEntries() {
-  function saveUiPrefs() {
-    localStorage.setItem('kakeibo_ui_prefs', JSON.stringify(uiPrefs));
-  }
-  
-  function setQuickDate(offsetDays) {
-    const d = new Date();
-    d.setDate(d.getDate() + offsetDays);
-    document.getElementById('f-date').value = d.toISOString().split('T')[0];
-  }
-  
-  function applyLastUsedForm() {
-    if (!uiPrefs.lastPreset && !uiPrefs.lastCreditByPreset) {
-      alert('前回入力の記録がありません');
-      return;
-    }
-  
-    const preset = uiPrefs.lastPreset || 'expense';
-    setPreset(preset);
-  
-    const rememberedCredit = uiPrefs.lastCreditByPreset?.[preset];
-    if (rememberedCredit) {
-      const cr = document.getElementById('f-cr');
-      if ([...cr.options].some(o => o.value === rememberedCredit)) {
-        cr.value = rememberedCredit;
-      }
-    }
-  
-    const rememberedDebit = uiPrefs.lastDebitByPreset?.[preset];
-    if (rememberedDebit) {
-      const dr = document.getElementById('f-dr');
-      if ([...dr.options].some(o => o.value === rememberedDebit)) {
-        dr.value = rememberedDebit;
-      }
-    }
-  }
-  
-  function updateListCategoryFilterOptions() {
-    const sel = document.getElementById('list-category-filter');
-    if (!sel) return;
-  
-    const current = sel.value;
-    const categories = Array.from(new Set([
-      ...getAccounts('expense', true),
-      ...getAccounts('income', true),
-      ...getAccounts('asset', true),
-      ...getAccounts('liability', true)
-    ])).sort((a, b) => a.localeCompare(b, 'ja'));
-  
-    sel.innerHTML = `<option value="">すべての科目</option>` +
-      categories.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
-  
-    if (categories.includes(current)) {
-      sel.value = current;
-    }
-  }
   localStorage.setItem('kakeibo4', JSON.stringify(entries));
+}
+
+function saveUiPrefs() {
+  localStorage.setItem('kakeibo_ui_prefs', JSON.stringify(uiPrefs));
+}
+
+function setQuickDate(offsetDays) {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  document.getElementById('f-date').value = d.toISOString().split('T')[0];
+}
+
+function applyLastUsedForm() {
+  if (!uiPrefs.lastPreset && !uiPrefs.lastCreditByPreset) {
+    alert('前回入力の記録がありません');
+    return;
+  }
+
+  const preset = uiPrefs.lastPreset || 'expense';
+  setPreset(preset);
+
+  const rememberedCredit = uiPrefs.lastCreditByPreset?.[preset];
+  if (rememberedCredit) {
+    const cr = document.getElementById('f-cr');
+    if ([...cr.options].some(o => o.value === rememberedCredit)) {
+      cr.value = rememberedCredit;
+    }
+  }
+
+  const rememberedDebit = uiPrefs.lastDebitByPreset?.[preset];
+  if (rememberedDebit) {
+    const dr = document.getElementById('f-dr');
+    if ([...dr.options].some(o => o.value === rememberedDebit)) {
+      dr.value = rememberedDebit;
+    }
+  }
+
+  renderQuickCreditButtons();
+}
+
+function updateListCategoryFilterOptions() {
+  const sel = document.getElementById('list-category-filter');
+  if (!sel) return;
+
+  const current = sel.value;
+  const categories = Array.from(new Set([
+    ...getAccounts('expense', true),
+    ...getAccounts('income', true),
+    ...getAccounts('asset', true),
+    ...getAccounts('liability', true)
+  ])).sort((a, b) => a.localeCompare(b, 'ja'));
+
+  sel.innerHTML = `<option value="">すべての科目</option>` +
+    categories.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+
+  if (categories.includes(current)) {
+    sel.value = current;
+  }
+}
+
+function getQuickCreditCandidates() {
+  const preset = currentPreset;
+  const remembered = uiPrefs.lastCreditByPreset?.[preset];
+  const allAsset = getAccounts('asset');
+  const allLiability = getAccounts('liability');
+  const allIncome = getAccounts('income');
+
+  let candidates = [];
+
+  if (preset === 'expense') {
+    candidates = [...allLiability, ...allAsset];
+  } else if (preset === 'income') {
+    candidates = allIncome;
+  } else if (preset === 'repay') {
+    candidates = allAsset;
+  } else if (preset === 'transfer') {
+    candidates = allAsset;
+  } else if (preset === 'point') {
+    candidates = [...allAsset, ...allIncome];
+  }
+
+  const uniq = Array.from(new Set(candidates.filter(Boolean)));
+  if (remembered && uniq.includes(remembered)) {
+    return [remembered, ...uniq.filter(v => v !== remembered)].slice(0, 6);
+  }
+  return uniq.slice(0, 6);
+}
+
+function renderQuickCreditButtons() {
+  const wrap = document.getElementById('quick-credit-wrap');
+  if (!wrap) return;
+
+  const cr = document.getElementById('f-cr');
+  const current = cr?.value || '';
+  const candidates = getQuickCreditCandidates();
+
+  if (!candidates.length) {
+    wrap.innerHTML = '';
+    return;
+  }
+
+  wrap.innerHTML = candidates.map(name => `
+    <button
+      type="button"
+      class="quick-credit-btn ${name === current ? 'active' : ''}"
+      onclick="selectQuickCredit('${escapeJs(name)}')"
+    >${escapeHtml(name)}</button>
+  `).join('');
+}
+
+function selectQuickCredit(name) {
+  const cr = document.getElementById('f-cr');
+  if (!cr) return;
+  if ([...cr.options].some(o => o.value === name)) {
+    cr.value = name;
+    renderQuickCreditButtons();
+  }
+}
+
+function moveFocusAfterAdd() {
+  document.getElementById('f-amt').focus();
+}
+
+function setupFormInteractions() {
+  const amt = document.getElementById('f-amt');
+  const desc = document.getElementById('f-desc');
+  const dr = document.getElementById('f-dr');
+  const cr = document.getElementById('f-cr');
+
+  if (amt && !amt.dataset.bound) {
+    amt.addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        desc.focus();
+      }
+    });
+    amt.dataset.bound = '1';
+  }
+
+  if (desc && !desc.dataset.bound) {
+    desc.addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        addEntry();
+      }
+    });
+    desc.dataset.bound = '1';
+  }
+
+  if (dr && !dr.dataset.bound) {
+    dr.addEventListener('change', () => {
+      if (!document.getElementById('f-desc').value.trim()) {
+        const selectedText = dr.value || '';
+        document.getElementById('f-desc').placeholder = selectedText ? `例：${selectedText}` : '例：スーパーで買い物';
+      }
+    });
+    dr.dataset.bound = '1';
+  }
+
+  if (cr && !cr.dataset.bound) {
+    cr.addEventListener('change', () => {
+      renderQuickCreditButtons();
+    });
+    cr.dataset.bound = '1';
+  }
 }
 
 function fmt(n) {
@@ -398,6 +510,7 @@ function refreshAccountDrivenUI(){
   renderSettings();
   updateMetrics();
   updateListCategoryFilterOptions();
+  renderQuickCreditButtons();
 }
 
 function updateMetrics() {
@@ -812,6 +925,7 @@ function addEntry() {
     saveEntries();
     cancelEdit(false);
     refreshActiveTab();
+    renderQuickCreditButtons();
     alert('更新しました！');
     return;
   }
@@ -821,6 +935,8 @@ function addEntry() {
   refreshActiveTab();
   resetForm();
   applyLastUsedForm();
+  renderQuickCreditButtons();
+  moveFocusAfterAdd();
   alert('追加しました！');
 }
 
@@ -841,6 +957,8 @@ function startEdit(id) {
   document.getElementById('f-dr-note').value = entry.drNote || '';
   document.getElementById('f-cr').value = entry.crCat || '';
   document.getElementById('f-cr-note').value = entry.crNote || '';
+
+  renderQuickCreditButtons();
 
   document.getElementById('submit-btn').textContent = '更新';
   const editBar = document.getElementById('edit-bar');
@@ -867,6 +985,7 @@ function resetForm() {
   document.getElementById('f-dr-note').value = '';
   document.getElementById('f-cr-note').value = '';
   setPreset(uiPrefs.lastPreset || 'expense');
+  renderQuickCreditButtons();
 }
 
 function guessPreset(entry) {
@@ -1106,17 +1225,5 @@ document.getElementById('f-date').value = new Date().toISOString().split('T')[0]
 updateMetrics();
 renderSettings();
 updateListCategoryFilterOptions();
-
-document.getElementById('f-amt').addEventListener('keydown', e => {
-  if (e.key === 'Enter') {
-    e.preventDefault();
-    document.getElementById('f-desc').focus();
-  }
-});
-
-document.getElementById('f-desc').addEventListener('keydown', e => {
-  if (e.key === 'Enter') {
-    e.preventDefault();
-    addEntry();
-  }
-});
+renderQuickCreditButtons();
+setupFormInteractions();

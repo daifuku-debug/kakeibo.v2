@@ -186,3 +186,12 @@ tr.acct td:first-child{padding-left:18px;}
 
 .list-tools{display:flex;gap:8px;flex-direction:column;margin-bottom:12px;}
 .list-search,.list-filter{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:14px;background:var(--bg);color:var(--text);}
+
+.amt-wrap{display:flex;align-items:center;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg2);overflow:hidden;}
+.amt-prefix{padding:0 12px;color:var(--text2);font-size:15px;border-right:1px solid var(--border);}
+.amt-wrap input{border:none !important;border-radius:0 !important;background:transparent !important;flex:1;}
+
+.quick-credit-wrap{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px;}
+.quick-credit-btn{padding:8px 12px;border:1px solid var(--border2);background:var(--bg);color:var(--text);border-radius:999px;font-size:12px;cursor:pointer;}
+.quick-credit-btn.active{background:var(--blue-bg);color:var(--blue-dark);border-color:rgba(55,138,221,0.35);font-weight:600;}
+.form-note{font-size:11px;color:var(--text2);margin-top:-6px;margin-bottom:10px;line-height:1.5;}

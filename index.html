@@ -56,15 +56,23 @@
           <label>日付</label>
           <input type="date" id="f-date">
         </div>
+      
         <div class="fgrp">
           <label>金額（円）</label>
-          <input type="number" id="f-amt" inputmode="numeric" placeholder="0" min="0">
+          <div class="amt-wrap">
+            <span class="amt-prefix">¥</span>
+            <input type="number" id="f-amt" inputmode="numeric" placeholder="0" min="0">
+          </div>
         </div>
       </div>
-
+      
       <div class="fgrp">
         <label>メモ</label>
         <input type="text" id="f-desc" placeholder="例：スーパーで買い物">
+      </div>
+      
+      <div class="form-note">
+        メモは空でもOKです。空の場合は借方科目名をタイトル代わりに表示します。
       </div>
 
       <div class="divrow" id="f-dr-label">借方</div>
@@ -92,6 +100,8 @@
       </div>
 
       <div id="edit-bar" class="editbar"></div>
+
+      <div id="quick-credit-wrap" class="quick-credit-wrap"></div>
 
       <button class="btnadd" id="submit-btn" onclick="addEntry()">追加</button>
 
