@@ -181,6 +181,11 @@
       <select id="fs-month" onchange="renderFS()"></select>
     </div>
 
+    <div class="gchart-card">
+      <div class="gtitle">月次締め</div>
+      <div id="monthly-close-wrap"></div>
+    </div>
+
     <div class="fs-tabs">
       <button class="fs-tab active" onclick="swFS('bs')">貸借対照表</button>
       <button class="fs-tab" onclick="swFS('pl')">損益計算書</button>
@@ -205,6 +210,44 @@
   </div>
 
   <div id="t-settings" class="sec">
+    <div class="card">
+      <div class="lhdr" style="margin-bottom:10px;">
+        <span class="lhdr-title">外部サーバー保存</span>
+      </div>
+      <div class="hint" style="margin-bottom:16px;">
+        Cloudflare Workers + KV に暗号化済みデータを保存・復元します。暗号化パスフレーズはこの端末に保存しません。
+      </div>
+
+      <div class="fgrp">
+        <label>Cloudflare Worker URL</label>
+        <input type="url" id="sync-endpoint" placeholder="https://example.workers.dev">
+      </div>
+
+      <div class="fgrp">
+        <label>アクセストークン</label>
+        <input type="password" id="sync-token" placeholder="Cloudflare Workerに設定したトークン">
+      </div>
+
+      <div class="fgrp">
+        <label>暗号化パスフレーズ</label>
+        <input type="password" id="sync-passphrase" placeholder="保存・読込時だけ入力">
+      </div>
+
+      <div class="form-note">
+        パスフレーズはタブを開いている間だけ記憶されます。忘れるとサーバーのデータを復元できません。
+      </div>
+
+      <div id="sync-status" class="sync-status"></div>
+
+      <div class="sub-actions">
+        <button class="btnsub" type="button" data-sync-action onclick="saveSyncConfig()">設定を保存</button>
+        <button class="btnsub" type="button" data-sync-action onclick="uploadToServer()">サーバーへ保存</button>
+      </div>
+      <div class="sub-actions">
+        <button class="btnsub" type="button" data-sync-action onclick="downloadFromServer()">サーバーから読み込む</button>
+      </div>
+    </div>
+
     <div class="card">
       <div class="lhdr" style="margin-bottom:10px;">
         <span class="lhdr-title">勘定科目の管理</span>

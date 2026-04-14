@@ -8,6 +8,9 @@ let gBS = null;
 let gPL = null;
 let editingId = null;
 let uiPrefs = JSON.parse(localStorage.getItem('kakeibo_ui_prefs') || '{}');
+let syncSettings = loadSyncSettings();
+let monthlyClosings = loadMonthlyClosings();
+let sessionSyncPassphrase = '';
 
 const defaultAccounts = {
   asset: ['現金','交通・電子マネー','SBI新生銀行','住信SBIネット銀行','ゆうちょ銀行','三井住友銀行','楽天銀行','中国銀行','NISA','固定資産','その他資産'],
@@ -114,6 +117,7 @@ function loadAccountSettings(){
 
 function saveAccountSettings(){
   localStorage.setItem('kakeibo_accounts', JSON.stringify(accountSettings));
+  markLocalChanged();
 }
 
 function getAccounts(type, includeInactive = false){
@@ -235,6 +239,18 @@ function setPreset(key) {
 
 function saveEntries() {
   localStorage.setItem('kakeibo4', JSON.stringify(entries));
+  markLocalChanged();
+}
+
+function loadMonthlyClosings() {
+  const raw = JSON.parse(localStorage.getItem('kakeibo_monthly_closings') || '[]');
+  if (!Array.isArray(raw)) return [];
+  return raw.map(normalizeMonthlyClosing).filter(Boolean);
+}
+
+function saveMonthlyClosings() {
+  localStorage.setItem('kakeibo_monthly_closings', JSON.stringify(monthlyClosings));
+  markLocalChanged();
 }
 
 function saveUiPrefs() {
@@ -487,6 +503,30 @@ function acctCumul(name, upToMonth){
   return t;
 }
 
+function monthKeyFromDate(dateValue) {
+  const d = new Date(dateValue);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function monthKeyFromMonth(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function getClosing(monthKey) {
+  return monthlyClosings.find(c => c.month === monthKey) || null;
+}
+
+function isMonthClosed(monthKey) {
+  return Boolean(getClosing(monthKey));
+}
+
+function blockIfClosedMonth(monthKey, actionLabel) {
+  if (!monthKey || !isMonthClosed(monthKey)) return false;
+  alert(`${monthKey} は締め済みです。${actionLabel}するには、財務タブで締めを解除してください。`);
+  return true;
+}
+
 function getActiveTab() {
   const tabs = ['record','list','graph','summary','fs','settings'];
   return tabs.find(t => document.getElementById('tb-' + t)?.classList.contains('active')) || 'record';
@@ -601,6 +641,8 @@ function renderList() {
 }
 
 function delEntry(id) {
+  const entry = entries.find(e => e.id === id);
+  if (entry && blockIfClosedMonth(monthKeyFromDate(entry.date), '削除')) return;
   if (!confirm('削除しますか？')) return;
   entries = entries.filter(e => e.id !== id);
   saveEntries();
@@ -867,9 +909,130 @@ function renderPL() {
   });
 }
 
+function buildMonthlyClosingSnapshot(baseMonth) {
+  const es = mEntries(baseMonth);
+  const assetBalances = {};
+  const liabilityBalances = {};
+
+  getAccounts('asset', true).forEach(name => {
+    const value = acctCumul(name, baseMonth);
+    if (value !== 0) assetBalances[name] = value;
+  });
+
+  getAccounts('liability', true).forEach(name => {
+    const value = -acctCumul(name, baseMonth);
+    if (value !== 0) liabilityBalances[name] = value;
+  });
+
+  const incomeTotal = es.filter(isIncome).reduce((s, e) => s + e.amount, 0);
+  const expenseTotal = es.filter(isExpense).reduce((s, e) => s + e.amount, 0);
+  const assetTotal = Object.values(assetBalances).reduce((s, v) => s + v, 0);
+  const liabilityTotal = Object.values(liabilityBalances).reduce((s, v) => s + v, 0);
+
+  return {
+    month:monthKeyFromMonth(baseMonth),
+    closedAt:new Date().toISOString(),
+    assetBalances,
+    liabilityBalances,
+    incomeTotal,
+    expenseTotal,
+    profit:incomeTotal - expenseTotal,
+    assetTotal,
+    liabilityTotal,
+    equity:assetTotal - liabilityTotal,
+    entryCount:es.length
+  };
+}
+
+function renderBalanceRows(title, balances) {
+  const rows = Object.entries(balances);
+  if (!rows.length) {
+    return `<div class="closing-row muted"><span>${title}</span><span>データなし</span></div>`;
+  }
+  return rows.map(([name, value]) => `
+    <div class="closing-row acct">
+      <span>${escapeHtml(name)}</span>
+      <span>${fmt(value)}</span>
+    </div>
+  `).join('');
+}
+
+function renderMonthlyClose() {
+  const wrap = document.getElementById('monthly-close-wrap');
+  if (!wrap) return;
+
+  const baseMonth = getSelectedMonth();
+  const snapshot = buildMonthlyClosingSnapshot(baseMonth);
+  const closed = getClosing(snapshot.month);
+  const shown = closed || snapshot;
+
+  wrap.innerHTML = `
+    <div class="closing-head">
+      <div>
+        <div class="closing-title">${escapeHtml(snapshot.month)} 月次締め</div>
+        <div class="closing-sub">${closed ? `締め済み: ${escapeHtml(formatSyncTime(closed.closedAt))}` : '未締めです'}</div>
+      </div>
+      <span class="acct-tag ${closed ? 'on' : 'off'}">${closed ? '締め済み' : '未締め'}</span>
+    </div>
+
+    <div class="closing-grid">
+      <div class="closing-metric"><span>収入</span><strong class="pos">${fmt(shown.incomeTotal)}</strong></div>
+      <div class="closing-metric"><span>支出</span><strong class="neg">${fmt(shown.expenseTotal)}</strong></div>
+      <div class="closing-metric"><span>収支</span><strong class="${shown.profit >= 0 ? 'pos' : 'neg'}">${fmtSigned(shown.profit)}</strong></div>
+      <div class="closing-metric"><span>取引数</span><strong>${shown.entryCount}件</strong></div>
+    </div>
+
+    <div class="closing-columns">
+      <div>
+        <div class="closing-section-title">月末資産</div>
+        ${renderBalanceRows('資産', shown.assetBalances)}
+        <div class="closing-row total"><span>資産合計</span><span>${fmt(shown.assetTotal)}</span></div>
+      </div>
+      <div>
+        <div class="closing-section-title">月末負債</div>
+        ${renderBalanceRows('負債', shown.liabilityBalances)}
+        <div class="closing-row total"><span>負債合計</span><span>${fmt(shown.liabilityTotal)}</span></div>
+      </div>
+    </div>
+    <div class="closing-row total equity"><span>純資産</span><span>${fmt(shown.equity)}</span></div>
+
+    <div class="sub-actions">
+      ${closed
+        ? '<button class="btnsub" type="button" onclick="reopenMonth()">締めを解除</button>'
+        : '<button class="btnsub" type="button" onclick="closeMonth()">この月を締める</button>'
+      }
+    </div>
+  `;
+}
+
+function closeMonth() {
+  const baseMonth = getSelectedMonth();
+  const snapshot = buildMonthlyClosingSnapshot(baseMonth);
+  if (!confirm(`${snapshot.month} を締めますか？締め済み月の取引は、締め解除まで追加・編集・削除できません。`)) return;
+
+  monthlyClosings = monthlyClosings.filter(c => c.month !== snapshot.month);
+  monthlyClosings.push(snapshot);
+  monthlyClosings.sort((a, b) => a.month.localeCompare(b.month));
+  saveMonthlyClosings();
+  renderMonthlyClose();
+  alert('月次締めを実行しました');
+}
+
+function reopenMonth() {
+  const month = monthKeyFromMonth(getSelectedMonth());
+  if (!getClosing(month)) return;
+  if (!confirm(`${month} の締めを解除しますか？`)) return;
+
+  monthlyClosings = monthlyClosings.filter(c => c.month !== month);
+  saveMonthlyClosings();
+  renderMonthlyClose();
+  alert('締めを解除しました');
+}
+
 function renderFS() {
   renderBS();
   renderPL();
+  renderMonthlyClose();
 }
 
 function swFS(t) {
@@ -912,6 +1075,9 @@ function addEntry() {
     return;
   }
 
+  const targetMonth = monthKeyFromDate(date);
+  if (blockIfClosedMonth(targetMonth, editingId ? '更新' : '追加')) return;
+
   const data = { date, amount, desc, drCat, drNote, crCat, crNote, preset:currentPreset };
 
   uiPrefs.lastPreset = currentPreset;
@@ -928,6 +1094,7 @@ function addEntry() {
       cancelEdit(false);
       return;
     }
+    if (blockIfClosedMonth(monthKeyFromDate(entries[idx].date), '更新')) return;
     entries[idx] = { ...entries[idx], ...data };
     saveEntries();
     cancelEdit(false);
@@ -953,6 +1120,7 @@ function startEdit(id) {
     alert('編集対象が見つかりませんでした');
     return;
   }
+  if (blockIfClosedMonth(monthKeyFromDate(entry.date), '編集')) return;
 
   editingId = id;
   setPreset(entry.preset || guessPreset(entry));
@@ -1006,14 +1174,54 @@ function guessPreset(entry) {
   return 'expense';
 }
 
-function exportData() {
-  const payload = {
+function buildBackupPayload() {
+  return {
     app:'kakeibo',
-    version:3,
+    version:5,
     exportedAt:new Date().toISOString(),
     entries,
-    accountSettings
+    accountSettings,
+    uiPrefs,
+    monthlyClosings
   };
+}
+
+function applyBackupPayload(raw) {
+  const importedEntries = Array.isArray(raw) ? raw : raw.entries;
+  if (!Array.isArray(importedEntries)) throw new Error('バックアップ形式が不正です');
+
+  const normalized = importedEntries.map(normalizeEntry);
+  if (normalized.some(v => !v)) throw new Error('読み込めないデータが含まれています');
+
+  entries = normalized;
+  if (raw.accountSettings) {
+    accountSettings = {
+      asset: normalizeAccountBlock(raw.accountSettings.asset, 'asset'),
+      liability: normalizeAccountBlock(raw.accountSettings.liability, 'liability'),
+      income: normalizeAccountBlock(raw.accountSettings.income, 'income'),
+      expense: normalizeAccountBlock(raw.accountSettings.expense, 'expense')
+    };
+    saveAccountSettings();
+  }
+
+  if (raw.uiPrefs && typeof raw.uiPrefs === 'object') {
+    uiPrefs = raw.uiPrefs;
+    saveUiPrefs();
+  }
+
+  monthlyClosings = Array.isArray(raw.monthlyClosings)
+    ? raw.monthlyClosings.map(normalizeMonthlyClosing).filter(Boolean)
+    : [];
+  localStorage.setItem('kakeibo_monthly_closings', JSON.stringify(monthlyClosings));
+
+  saveEntries();
+  cancelEdit(false);
+  refreshActiveTab();
+  refreshAccountDrivenUI();
+}
+
+function exportData() {
+  const payload = buildBackupPayload();
 
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type:'application/json' });
   const url = URL.createObjectURL(blob);
@@ -1042,29 +1250,12 @@ function importData(event) {
       const importedEntries = Array.isArray(raw) ? raw : raw.entries;
       if (!Array.isArray(importedEntries)) throw new Error('バックアップ形式が不正です');
 
-      const normalized = importedEntries.map(normalizeEntry);
-      if (normalized.some(v => !v)) throw new Error('読み込めないデータが含まれています');
-
-      if (!confirm(`現在のデータを消して、${normalized.length}件のバックアップで置き換えますか？`)) {
+      if (!confirm(`現在のデータを消して、${importedEntries.length}件のバックアップで置き換えますか？`)) {
         event.target.value = '';
         return;
       }
 
-      entries = normalized;
-      if (raw.accountSettings) {
-        accountSettings = {
-          asset: normalizeAccountBlock(raw.accountSettings.asset, 'asset'),
-          liability: normalizeAccountBlock(raw.accountSettings.liability, 'liability'),
-          income: normalizeAccountBlock(raw.accountSettings.income, 'income'),
-          expense: normalizeAccountBlock(raw.accountSettings.expense, 'expense')
-        };
-        saveAccountSettings();
-      }
-
-      saveEntries();
-      cancelEdit(false);
-      refreshActiveTab();
-      refreshAccountDrivenUI();
+      applyBackupPayload(raw);
       alert('バックアップを読み込みました');
     } catch (err) {
       alert('読み込みに失敗しました: ' + err.message);
@@ -1073,6 +1264,225 @@ function importData(event) {
     }
   };
   reader.readAsText(file);
+}
+
+function loadSyncSettings() {
+  const saved = JSON.parse(localStorage.getItem('kakeibo_sync_settings') || '{}');
+  return {
+    endpoint:saved.endpoint || '',
+    token:saved.token || '',
+    lastSyncAt:saved.lastSyncAt || '',
+    lastLocalChangeAt:saved.lastLocalChangeAt || ''
+  };
+}
+
+function saveSyncSettings() {
+  localStorage.setItem('kakeibo_sync_settings', JSON.stringify(syncSettings));
+}
+
+function markLocalChanged() {
+  if (!syncSettings) return;
+  syncSettings.lastLocalChangeAt = new Date().toISOString();
+  saveSyncSettings();
+  renderSyncStatus();
+}
+
+function saveSyncConfig(message = '同期設定を保存しました') {
+  syncSettings.endpoint = (document.getElementById('sync-endpoint')?.value || '').trim();
+  syncSettings.token = (document.getElementById('sync-token')?.value || '').trim();
+  const passphrase = (document.getElementById('sync-passphrase')?.value || '').trim();
+  if (passphrase) sessionSyncPassphrase = passphrase;
+  saveSyncSettings();
+  renderSyncStatus(message);
+}
+
+function getSyncHeaders() {
+  const headers = { 'Content-Type':'application/json' };
+  if (syncSettings.token) headers.Authorization = `Bearer ${syncSettings.token}`;
+  return headers;
+}
+
+function ensureSyncEndpoint() {
+  saveSyncConfig('');
+  if (!syncSettings.endpoint) {
+    throw new Error('Cloudflare Worker URLを入力してください');
+  }
+}
+
+function getSyncPassphrase() {
+  const input = document.getElementById('sync-passphrase');
+  const typed = (input?.value || '').trim();
+  if (typed) {
+    sessionSyncPassphrase = typed;
+    if (input) input.value = '';
+    renderSyncStatus('暗号化パスフレーズをこのタブで記憶しました');
+    return sessionSyncPassphrase;
+  }
+
+  if (sessionSyncPassphrase) return sessionSyncPassphrase;
+
+  const prompted = prompt('暗号化パスフレーズを入力してください。パスフレーズはこの端末に保存されません。');
+  if (!prompted) throw new Error('暗号化パスフレーズが必要です');
+  sessionSyncPassphrase = prompted;
+  renderSyncStatus('暗号化パスフレーズをこのタブで記憶しました');
+  return sessionSyncPassphrase;
+}
+
+function bytesToBase64(bytes) {
+  let binary = '';
+  bytes.forEach(b => { binary += String.fromCharCode(b); });
+  return btoa(binary);
+}
+
+function base64ToBytes(value) {
+  const binary = atob(value);
+  return Uint8Array.from(binary, ch => ch.charCodeAt(0));
+}
+
+async function deriveCryptoKey(passphrase, salt) {
+  if (!window.crypto?.subtle) throw new Error('このブラウザは暗号化に対応していません');
+  const material = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(passphrase),
+    'PBKDF2',
+    false,
+    ['deriveKey']
+  );
+  return crypto.subtle.deriveKey(
+    { name:'PBKDF2', salt, iterations:210000, hash:'SHA-256' },
+    material,
+    { name:'AES-GCM', length:256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+async function encryptPayload(payload, passphrase) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await deriveCryptoKey(passphrase, salt);
+  const plaintext = new TextEncoder().encode(JSON.stringify(payload));
+  const ciphertext = await crypto.subtle.encrypt({ name:'AES-GCM', iv }, key, plaintext);
+
+  return {
+    app:'kakeibo',
+    version:1,
+    encrypted:true,
+    crypto:{
+      algorithm:'AES-GCM',
+      kdf:'PBKDF2',
+      hash:'SHA-256',
+      iterations:210000
+    },
+    salt:bytesToBase64(salt),
+    iv:bytesToBase64(iv),
+    ciphertext:bytesToBase64(new Uint8Array(ciphertext)),
+    savedAt:new Date().toISOString()
+  };
+}
+
+async function decryptPayload(envelope, passphrase) {
+  if (!envelope?.encrypted || envelope.app !== 'kakeibo') {
+    throw new Error('サーバーのデータ形式が不正です');
+  }
+  if (envelope.crypto?.algorithm !== 'AES-GCM' || envelope.crypto?.kdf !== 'PBKDF2') {
+    throw new Error('対応していない暗号化形式です');
+  }
+
+  const salt = base64ToBytes(envelope.salt);
+  const iv = base64ToBytes(envelope.iv);
+  const ciphertext = base64ToBytes(envelope.ciphertext);
+  const key = await deriveCryptoKey(passphrase, salt);
+
+  try {
+    const plaintext = await crypto.subtle.decrypt({ name:'AES-GCM', iv }, key, ciphertext);
+    return JSON.parse(new TextDecoder().decode(plaintext));
+  } catch (err) {
+    throw new Error('復号に失敗しました。パスフレーズが違う可能性があります。');
+  }
+}
+
+async function uploadToServer() {
+  try {
+    ensureSyncEndpoint();
+    const passphrase = getSyncPassphrase();
+    setSyncBusy(true, '暗号化してアップロード中...');
+    const encryptedPayload = await encryptPayload(buildBackupPayload(), passphrase);
+
+    const res = await fetch(syncSettings.endpoint, {
+      method:'PUT',
+      headers:getSyncHeaders(),
+      body:JSON.stringify(encryptedPayload)
+    });
+
+    if (!res.ok) throw new Error(`サーバーが ${res.status} を返しました`);
+
+    syncSettings.lastSyncAt = new Date().toISOString();
+    saveSyncSettings();
+    renderSyncStatus('暗号化してCloudflareに保存しました');
+  } catch (err) {
+    renderSyncStatus('アップロード失敗: ' + err.message, true);
+  } finally {
+    setSyncBusy(false);
+  }
+}
+
+async function downloadFromServer() {
+  try {
+    ensureSyncEndpoint();
+    if (!confirm('サーバーのデータで、この端末のデータを置き換えますか？')) return;
+    const passphrase = getSyncPassphrase();
+
+    setSyncBusy(true, 'ダウンロードして復号中...');
+    const res = await fetch(syncSettings.endpoint, {
+      method:'GET',
+      headers:getSyncHeaders()
+    });
+
+    if (!res.ok) throw new Error(`サーバーが ${res.status} を返しました`);
+
+    const raw = await res.json();
+    const payload = await decryptPayload(raw, passphrase);
+    const count = Array.isArray(payload) ? payload.length : payload.entries.length;
+    applyBackupPayload(payload);
+
+    syncSettings.lastSyncAt = new Date().toISOString();
+    saveSyncSettings();
+    renderSyncStatus(`Cloudflareから${count}件を復元しました`);
+    alert('Cloudflareのデータを読み込みました');
+  } catch (err) {
+    renderSyncStatus('ダウンロード失敗: ' + err.message, true);
+  } finally {
+    setSyncBusy(false);
+  }
+}
+
+function setSyncBusy(isBusy, message = '') {
+  document.querySelectorAll('[data-sync-action]').forEach(btn => {
+    btn.disabled = isBusy;
+  });
+  if (message) renderSyncStatus(message);
+}
+
+function formatSyncTime(value) {
+  if (!value) return '未実行';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '未実行';
+  return d.toLocaleString('ja-JP', { dateStyle:'short', timeStyle:'short' });
+}
+
+function renderSyncStatus(message = '', isError = false) {
+  const status = document.getElementById('sync-status');
+  if (!status) return;
+
+  const lastSync = formatSyncTime(syncSettings.lastSyncAt);
+  const lastChange = formatSyncTime(syncSettings.lastLocalChangeAt);
+  const passState = sessionSyncPassphrase ? 'このタブで記憶中' : '未入力';
+  status.classList.toggle('err', isError);
+  status.innerHTML = `
+    <div>${message ? escapeHtml(message) : 'Cloudflareへ暗号化して手動保存・復元できます。'}</div>
+    <div class="sync-meta">最終同期: ${escapeHtml(lastSync)} / この端末の最終変更: ${escapeHtml(lastChange)} / パスフレーズ: ${passState}</div>
+  `;
 }
 
 function normalizeEntry(e) {
@@ -1094,7 +1504,53 @@ function normalizeEntry(e) {
   };
 }
 
+function normalizeNumberMap(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value)
+      .map(([key, val]) => [String(key), Number(val)])
+      .filter(([, val]) => Number.isFinite(val))
+  );
+}
+
+function normalizeMonthlyClosing(closing) {
+  if (!closing || typeof closing !== 'object') return null;
+  const month = String(closing.month || '');
+  if (!/^\d{4}-\d{2}$/.test(month)) return null;
+
+  const assetBalances = normalizeNumberMap(closing.assetBalances);
+  const liabilityBalances = normalizeNumberMap(closing.liabilityBalances);
+  const incomeTotal = Number(closing.incomeTotal || 0);
+  const expenseTotal = Number(closing.expenseTotal || 0);
+  const assetTotal = Number(closing.assetTotal ?? Object.values(assetBalances).reduce((s, v) => s + v, 0));
+  const liabilityTotal = Number(closing.liabilityTotal ?? Object.values(liabilityBalances).reduce((s, v) => s + v, 0));
+
+  return {
+    month,
+    closedAt:String(closing.closedAt || new Date().toISOString()),
+    assetBalances,
+    liabilityBalances,
+    incomeTotal:Number.isFinite(incomeTotal) ? incomeTotal : 0,
+    expenseTotal:Number.isFinite(expenseTotal) ? expenseTotal : 0,
+    profit:Number.isFinite(Number(closing.profit)) ? Number(closing.profit) : incomeTotal - expenseTotal,
+    assetTotal:Number.isFinite(assetTotal) ? assetTotal : 0,
+    liabilityTotal:Number.isFinite(liabilityTotal) ? liabilityTotal : 0,
+    equity:Number.isFinite(Number(closing.equity)) ? Number(closing.equity) : assetTotal - liabilityTotal,
+    entryCount:Number.isFinite(Number(closing.entryCount)) ? Number(closing.entryCount) : 0
+  };
+}
+
 function renderSettings(){
+  const endpointInput = document.getElementById('sync-endpoint');
+  const tokenInput = document.getElementById('sync-token');
+  if (endpointInput && endpointInput.value !== syncSettings.endpoint) {
+    endpointInput.value = syncSettings.endpoint;
+  }
+  if (tokenInput && tokenInput.value !== syncSettings.token) {
+    tokenInput.value = syncSettings.token;
+  }
+  renderSyncStatus();
+
   ['asset','liability','income','expense'].forEach(type => {
     const mount = document.getElementById(`acct-list-${type}`);
     if (!mount) return;
