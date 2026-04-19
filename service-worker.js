@@ -1,4 +1,4 @@
-const CACHE_NAME = 'kakeibo-pwa-v8';
+const CACHE_NAME = 'kakeibo-pwa-v9';
 const urlsToCache = [
   './',
   './index.html',
@@ -33,6 +33,12 @@ self.addEventListener('activate', event => {
 });
 
 self.addEventListener('fetch', event => {
+  const url = new URL(event.request.url);
+
+  if (event.request.method !== 'GET' || url.origin !== self.location.origin) {
+    return;
+  }
+
   event.respondWith(
     caches.match(event.request).then(response => {
       return response || fetch(event.request);
